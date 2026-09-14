@@ -151,6 +151,13 @@ type RequestContext struct {
 	// FlowControlQueueDuration is the wall-clock time the request spent in flow control admission
 	// (enqueue-and-wait). Meaningful only when FlowControlAdmitted is true.
 	FlowControlQueueDuration time.Duration
+	// FlowControlBandHeadroom is the priority band's remaining request queue capacity, sampled from the flow
+	// registry at the ext-proc response-headers phase. Meaningful only when FlowControlBandHeadroomOK is true.
+	FlowControlBandHeadroom uint64
+	// FlowControlBandHeadroomOK reports whether FlowControlBandHeadroom could be resolved: the band exists for
+	// the request's priority and carries a configured request capacity. It gates emission of the
+	// FlowBandHeadroom response header.
+	FlowControlBandHeadroomOK bool
 
 	// Lifecycle bookkeeping.
 	firstTokenTimestamp        time.Time

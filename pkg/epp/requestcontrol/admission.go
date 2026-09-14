@@ -56,12 +56,18 @@ type AdmissionController interface {
 		reqCtx *handlers.RequestContext,
 		priority int,
 	) error
+
+	// BandHeadroom returns the given priority band's remaining request queue capacity, sampled live at call
+	// time. It reports false when the band cannot be resolved for the priority, or the band has no configured
+	// request capacity.
+	BandHeadroom(priority int) (uint64, bool)
 }
 
-// flowController defines the minimal interface required by FlowControlAdmissionController for enqueuing requests and
-// waiting for an admission outcome.
+// flowController defines the minimal interface required by FlowControlAdmissionController for enqueuing requests,
+// waiting for an admission outcome, and reading live capacity counters.
 type flowController interface {
 	EnqueueAndWait(ctx context.Context, req flowcontrol.FlowControlRequest) (types.QueueOutcome, error)
+	CapacitySnapshot(priority int) (contracts.CapacitySnapshot, error)
 }
 
 // rejectIfSheddableAndSaturated checks if a request should be immediately rejected.
@@ -128,6 +134,12 @@ func (lac *LegacyAdmissionController) Admit(
 	}
 	logger.V(logutil.TRACE).Info("Request admitted", "requestID", reqCtx.SchedulingRequest.RequestID)
 	return nil
+}
+
+// BandHeadroom always reports false: the legacy admission strategy does not use the flow registry's priority
+// bands.
+func (lac *LegacyAdmissionController) BandHeadroom(int) (uint64, bool) {
+	return 0, false
 }
 
 // --- FlowControlAdmissionController ---
@@ -205,6 +217,20 @@ func (fcac *FlowControlAdmissionController) Admit(
 	// mapping consults it: a TTL expiry whose regime is not already established by ErrNoEndpoints.
 	poolEmpty := func() bool { return len(fcac.endpointCandidates.Locate(ctx, nil)) == 0 }
 	return translateFlowControlError(err, poolEmpty)
+}
+
+// BandHeadroom returns the priority band's configured request capacity minus its current length, clamped at
+// zero, read live from the flow registry's capacity counters. It reports false when the band cannot be
+// resolved for the priority, or the band has no configured request capacity.
+func (fcac *FlowControlAdmissionController) BandHeadroom(priority int) (uint64, bool) {
+	snapshot, err := fcac.flowController.CapacitySnapshot(priority)
+	if err != nil || snapshot.Band.CapacityRequests == 0 {
+		return 0, false
+	}
+	if snapshot.Band.Len >= snapshot.Band.CapacityRequests {
+		return 0, true
+	}
+	return snapshot.Band.CapacityRequests - snapshot.Band.Len, true
 }
 
 // flowControlRequest is an adapter that implements the FlowControlRequest interface.

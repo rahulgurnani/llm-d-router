@@ -70,11 +70,17 @@ var (
 // --- Mocks ---
 
 type mockAdmissionController struct {
-	admitErr error
+	admitErr       error
+	bandHeadroom   uint64
+	bandHeadroomOK bool
 }
 
 func (m *mockAdmissionController) Admit(context.Context, *handlers.RequestContext, int) error {
 	return m.admitErr
+}
+
+func (m *mockAdmissionController) BandHeadroom(int) (uint64, bool) {
+	return m.bandHeadroom, m.bandHeadroomOK
 }
 
 type mockScheduler struct {
@@ -1616,6 +1622,67 @@ func TestDirector_HandleResponseReceived(t *testing.T) {
 	if diff := cmp.Diff("namespace1/test-pod-name", pr1.lastTargetPodOnResponse); diff != "" {
 		t.Errorf("Scheduler.OnResponse TargetPodName mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func TestDirector_HandleResponseHeader_BandHeadroom(t *testing.T) {
+	t.Parallel()
+	ctx := logutil.NewTestLoggerIntoContext(context.Background())
+	ds := datastore.NewDatastore(t.Context(), nil)
+	mockSched := &mockScheduler{}
+	endpointCandidates := NewCachedEndpointCandidates(context.Background(), NewDatastoreEndpointCandidates(ds), time.Minute)
+
+	newReqCtx := func(admitted bool) *handlers.RequestContext {
+		return &handlers.RequestContext{
+			Request:             &handlers.Request{Headers: map[string]string{}},
+			Response:            &handlers.Response{Headers: map[string]string{}},
+			Priority:            2,
+			FlowControlAdmitted: admitted,
+		}
+	}
+
+	t.Run("stamps headroom when admitted and resolvable", func(t *testing.T) {
+		t.Parallel()
+		director := NewDirectorWithConfig(
+			ds, mockSched,
+			&mockAdmissionController{bandHeadroom: 5, bandHeadroomOK: true},
+			endpointCandidates, NewConfig(),
+		)
+		reqCtx := newReqCtx(true)
+
+		director.HandleResponseHeader(ctx, reqCtx)
+
+		assert.True(t, reqCtx.FlowControlBandHeadroomOK)
+		assert.Equal(t, uint64(5), reqCtx.FlowControlBandHeadroom)
+	})
+
+	t.Run("leaves fields unset when not admitted", func(t *testing.T) {
+		t.Parallel()
+		director := NewDirectorWithConfig(
+			ds, mockSched,
+			&mockAdmissionController{bandHeadroom: 5, bandHeadroomOK: true},
+			endpointCandidates, NewConfig(),
+		)
+		reqCtx := newReqCtx(false)
+
+		director.HandleResponseHeader(ctx, reqCtx)
+
+		assert.False(t, reqCtx.FlowControlBandHeadroomOK)
+		assert.Zero(t, reqCtx.FlowControlBandHeadroom)
+	})
+
+	t.Run("leaves fields unset when band unresolved", func(t *testing.T) {
+		t.Parallel()
+		director := NewDirectorWithConfig(
+			ds, mockSched,
+			&mockAdmissionController{bandHeadroomOK: false},
+			endpointCandidates, NewConfig(),
+		)
+		reqCtx := newReqCtx(true)
+
+		director.HandleResponseHeader(ctx, reqCtx)
+
+		assert.False(t, reqCtx.FlowControlBandHeadroomOK)
+	})
 }
 
 // TestDirector_HandleResponseHeader_SessionAffinity validates that the

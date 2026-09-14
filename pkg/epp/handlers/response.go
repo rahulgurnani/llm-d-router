@@ -197,6 +197,17 @@ func (s *StreamingServer) generateResponseHeaders(reqCtx *RequestContext) []*con
 		})
 	}
 
+	// Stamp the band headroom sampled at the response-headers phase. Absent when flow control did not
+	// process the request or the band could not be resolved to a configured request capacity.
+	if reqCtx.FlowControlAdmitted && reqCtx.FlowControlBandHeadroomOK {
+		headers = append(headers, &configPb.HeaderValueOption{
+			Header: &configPb.HeaderValue{
+				Key:      metadata.FlowBandHeadroomHeaderKey,
+				RawValue: []byte(strconv.FormatUint(reqCtx.FlowControlBandHeadroom, 10)),
+			},
+		})
+	}
+
 	// Include any non-system-owned headers.
 	for key, value := range reqCtx.Response.Headers {
 		if request.IsSystemOwnedHeader(key) {

@@ -65,6 +65,11 @@ const (
 	// FlowQueueDurationHeaderKey is the response header carrying the time a request spent in flow control admission,
 	// as integer milliseconds. It is absent when flow control did not process the request.
 	FlowQueueDurationHeaderKey = "x-llm-d-flow-queue-duration-ms"
+	// FlowBandHeadroomHeaderKey is the response header carrying the remaining request queue capacity of the
+	// priority band a request occupied, sampled from the flow registry's capacity counters at the ext-proc
+	// response-headers phase. It is absent when flow control did not process the request, the band cannot be
+	// resolved, or the band has no configured request capacity.
+	FlowBandHeadroomHeaderKey = "x-llm-d-flow-band-headroom-requests"
 
 	// DefaultFairnessID is the default fairness ID used when no ID is provided in the request.
 	// This ensures that requests without explicit fairness identifiers are still grouped and managed by the Flow Control

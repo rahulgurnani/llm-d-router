@@ -309,6 +309,13 @@ func (fc *FlowController) EnqueueAndWait(
 	return finalOutcome, err
 }
 
+// CapacitySnapshot returns the current occupancy and configured capacity for the given priority band, delegating to
+// the registry's data plane. The registry guarantees a lock-free, allocation-free read, so this is safe to call
+// outside the admission path, such as when sampling band headroom for a response header.
+func (fc *FlowController) CapacitySnapshot(priority int) (contracts.CapacitySnapshot, error) {
+	return fc.registry.CapacitySnapshot(priority)
+}
+
 // fallbackRequest wraps a FlowControlRequest to override its flow key, so a request that falls back to a different
 // priority is enqueued under the band that was actually leased rather than its original (unprovisioned) band.
 //

@@ -511,6 +511,15 @@ func (d *Director) toSchedulerEndpoints(endpoints []fwkdl.Endpoint) []fwksched.E
 
 // HandleResponseHeader is called when the response headers are received.
 func (d *Director) HandleResponseHeader(ctx context.Context, reqCtx *handlers.RequestContext) *handlers.RequestContext {
+	// Sample band headroom at the response-headers phase so the value reflects the registry's state at the
+	// moment the response passes through, rather than at admission time.
+	if reqCtx.FlowControlAdmitted {
+		if headroom, ok := d.admissionController.BandHeadroom(reqCtx.Priority); ok {
+			reqCtx.FlowControlBandHeadroom = headroom
+			reqCtx.FlowControlBandHeadroomOK = true
+		}
+	}
+
 	if len(d.requestControlPlugins.responseReceivedPlugins) == 0 {
 		return reqCtx
 	}

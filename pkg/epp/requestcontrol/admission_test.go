@@ -30,6 +30,7 @@ import (
 
 	errcommon "github.com/llm-d/llm-d-router/pkg/common/error"
 	logutil "github.com/llm-d/llm-d-router/pkg/common/observability/logging"
+	"github.com/llm-d/llm-d-router/pkg/epp/flowcontrol/contracts"
 	"github.com/llm-d/llm-d-router/pkg/epp/flowcontrol/contracts/mocks"
 	fctypes "github.com/llm-d/llm-d-router/pkg/epp/flowcontrol/types"
 	fwkdl "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/datalayer"
@@ -59,6 +60,9 @@ type mockFlowController struct {
 	called  bool
 	delay   time.Duration
 	request flowcontrol.FlowControlRequest
+
+	capacitySnapshot    contracts.CapacitySnapshot
+	capacitySnapshotErr error
 }
 
 func (m *mockFlowController) EnqueueAndWait(
@@ -71,6 +75,10 @@ func (m *mockFlowController) EnqueueAndWait(
 	}
 	m.request = request
 	return m.outcome, m.err
+}
+
+func (m *mockFlowController) CapacitySnapshot(int) (contracts.CapacitySnapshot, error) {
+	return m.capacitySnapshot, m.capacitySnapshotErr
 }
 
 // --- Legacy Controller Tests ---
@@ -465,6 +473,71 @@ func TestFlowControlAdmissionController_StampsQueueDuration(t *testing.T) {
 		require.NoError(t, ac.Admit(ctx, reqCtx, 0))
 		assert.False(t, reqCtx.FlowControlAdmitted)
 	})
+}
+
+func TestFlowControlAdmissionController_BandHeadroom(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name         string
+		snapshot     contracts.CapacitySnapshot
+		snapshotErr  error
+		wantHeadroom uint64
+		wantOK       bool
+	}{
+		{
+			name:         "returns remaining capacity",
+			snapshot:     contracts.CapacitySnapshot{Band: contracts.CapacityDimension{Len: 3, CapacityRequests: 10}},
+			wantHeadroom: 7,
+			wantOK:       true,
+		},
+		{
+			name:         "clamps at zero when over capacity",
+			snapshot:     contracts.CapacitySnapshot{Band: contracts.CapacityDimension{Len: 12, CapacityRequests: 10}},
+			wantHeadroom: 0,
+			wantOK:       true,
+		},
+		{
+			name:         "at capacity reports zero headroom",
+			snapshot:     contracts.CapacitySnapshot{Band: contracts.CapacityDimension{Len: 10, CapacityRequests: 10}},
+			wantHeadroom: 0,
+			wantOK:       true,
+		},
+		{
+			name:     "no configured request capacity omits",
+			snapshot: contracts.CapacitySnapshot{Band: contracts.CapacityDimension{Len: 3, CapacityRequests: 0}},
+			wantOK:   false,
+		},
+		{
+			name:        "unresolved band omits",
+			snapshotErr: contracts.ErrPriorityBandNotFound,
+			wantOK:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fc := &mockFlowController{capacitySnapshot: tc.snapshot, capacitySnapshotErr: tc.snapshotErr}
+			ac := NewFlowControlAdmissionController(fc, "pool", &mocks.MockEndpointCandidates{})
+
+			headroom, ok := ac.BandHeadroom(1)
+
+			assert.Equal(t, tc.wantOK, ok)
+			if tc.wantOK {
+				assert.Equal(t, tc.wantHeadroom, headroom)
+			}
+		})
+	}
+}
+
+func TestLegacyAdmissionController_BandHeadroom(t *testing.T) {
+	t.Parallel()
+	ac := NewLegacyAdmissionController(&mockSaturationDetector{}, &mocks.MockEndpointCandidates{})
+
+	_, ok := ac.BandHeadroom(1)
+
+	assert.False(t, ok)
 }
 
 func TestTranslateFlowControlError(t *testing.T) {

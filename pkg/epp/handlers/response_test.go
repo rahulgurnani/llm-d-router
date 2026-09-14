@@ -565,6 +565,71 @@ func TestGenerateResponseHeaders_FlowQueueDuration(t *testing.T) {
 	}
 }
 
+func TestGenerateResponseHeaders_FlowBandHeadroom(t *testing.T) {
+	server := &StreamingServer{}
+
+	tests := []struct {
+		name       string
+		admitted   bool
+		headroom   uint64
+		headroomOK bool
+		wantValue  string
+		wantEmit   bool
+	}{
+		{
+			name:       "not admitted omits header",
+			admitted:   false,
+			headroomOK: true,
+			headroom:   5,
+			wantEmit:   false,
+		},
+		{
+			name:       "admitted but unresolved band omits header",
+			admitted:   true,
+			headroomOK: false,
+			wantEmit:   false,
+		},
+		{
+			name:       "admitted and resolvable emits headroom",
+			admitted:   true,
+			headroomOK: true,
+			headroom:   5,
+			wantValue:  "5",
+			wantEmit:   true,
+		},
+		{
+			name:       "admitted and resolvable emits zero headroom",
+			admitted:   true,
+			headroomOK: true,
+			headroom:   0,
+			wantValue:  "0",
+			wantEmit:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reqCtx := &RequestContext{
+				FlowControlAdmitted:       tc.admitted,
+				FlowControlBandHeadroom:   tc.headroom,
+				FlowControlBandHeadroomOK: tc.headroomOK,
+				Response:                  &Response{Headers: map[string]string{}},
+			}
+
+			gotHeaders := make(map[string]string)
+			for _, h := range server.generateResponseHeaders(reqCtx) {
+				gotHeaders[h.Header.Key] = string(h.Header.RawValue)
+			}
+
+			if tc.wantEmit {
+				assert.Equal(t, tc.wantValue, gotHeaders[metadata.FlowBandHeadroomHeaderKey])
+			} else {
+				assert.NotContains(t, gotHeaders, metadata.FlowBandHeadroomHeaderKey)
+			}
+		})
+	}
+}
+
 func TestRewriteModelName(t *testing.T) {
 	tests := []struct {
 		name          string
